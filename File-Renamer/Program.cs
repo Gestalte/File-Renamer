@@ -3,6 +3,7 @@ using System;
 using System.Collections.Generic;
 using System.Drawing;
 using System.IO;
+using System.Linq;
 
 namespace File_Renamer
 {
@@ -10,21 +11,22 @@ namespace File_Renamer
     {
         static void Main(string[] args)
         {
-            List<FilterRule> filterRules = null;
-            List<RenameRule> renameRules = null;
+            List<FilterRule> filterRules = new List<FilterRule>();
+            List<RenameRule> renameRules = new List<RenameRule>();
 
             var consoleWriter = new ConsoleWriter();
 
             try
             {
-                IConfigurationRoot Configuration = new ConfigurationBuilder()
+                IConfiguration Configuration = new ConfigurationBuilder()
                 .SetBasePath(Directory.GetCurrentDirectory())
                 .AddJsonFile("appsettings.json")
                 .Build();
 
                 var settings = Configuration.GetSection("AppSettings");
-                var filterRuleNames = settings.GetSection("FilterRules").Value.Split(",");
-                var renameRulesNames = settings.GetSection("RenameRules").Value.Split(",");
+
+                IEnumerable<string> filterRuleNames = Configuration.GetSection("FilterRules").GetChildren().Select(x => x.Value);
+                IEnumerable<string> renameRulesNames = Configuration.GetSection("RenameRules").GetChildren().Select(x => x.Value);
 
                 foreach (var filterRule in filterRuleNames)
                 {
