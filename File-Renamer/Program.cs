@@ -1,7 +1,6 @@
 ﻿using Microsoft.Extensions.Configuration;
 using System;
 using System.Collections.Generic;
-using System.Drawing;
 using System.IO;
 using System.Linq;
 
@@ -9,11 +8,8 @@ namespace File_Renamer
 {
     partial class Program
     {
-        static void Main(string[] args)
+        static void Main(string[] args) // Composition Root
         {
-            List<FilterRule> filterRules = new List<FilterRule>();
-            List<RenameRule> renameRules = new List<RenameRule>();
-
             var consoleWriter = new ConsoleWriter();
 
             try
@@ -23,190 +19,131 @@ namespace File_Renamer
                 .AddJsonFile("appsettings.json")
                 .Build();
 
-                var settings = Configuration.GetSection("AppSettings");
+                IEnumerable<string> filterRuleNames = Configuration.GetSection("FilterRules")
+                    .GetChildren()
+                    .Select(x => x.Value);
 
-                IEnumerable<string> filterRuleNames = Configuration.GetSection("FilterRules").GetChildren().Select(x => x.Value);
-                IEnumerable<string> renameRulesNames = Configuration.GetSection("RenameRules").GetChildren().Select(x => x.Value);
+                IEnumerable<string> renameRulesNames = Configuration.GetSection("RenameRules")
+                    .GetChildren()
+                    .Select(x => x.Value);
 
-                foreach (var filterRule in filterRuleNames)
+                List<IFilterRule> filterRules = new List<IFilterRule>();
+
+                foreach (string filterRule in filterRuleNames)
                 {
                     Type type = Type.GetType(filterRule, throwOnError: true);
-                    FilterRule fr = (FilterRule)Activator.CreateInstance(type);
+                    IFilterRule fr = (IFilterRule)Activator.CreateInstance(type);
                     filterRules.Add(fr);
                 }
 
-                foreach (var renameRule in renameRulesNames)
+                List<IRenameRule> renameRules = new List<IRenameRule>();
+
+                foreach (string renameRule in renameRulesNames)
                 {
                     Type type = Type.GetType(renameRule, throwOnError: true);
-                    RenameRule rr = (RenameRule)Activator.CreateInstance(type);
+                    IRenameRule rr = (IRenameRule)Activator.CreateInstance(type);
                     renameRules.Add(rr);
                 }
 
-                DoWork doWork = new DoWork(new FileRetriever(), consoleWriter, filterRules, renameRules);
+                List<Filter> filters = new List<Filter>();
 
-                doWork.Convert();
+                foreach (IFilterRule filterRule in filterRules)
+                    filters.Add(new Filter(filterRule));
 
-                consoleWriter.WriteColorMessage("Done!", messageType.success);
+                List<Renamer> renamers = new List<Renamer>();
+
+                foreach (IRenameRule renameRule in renameRules)
+                    renamers.Add(new Renamer(renameRule));
+
+                StringRetriever stringRetriever = new StringRetriever(new FileRetriever());
+
+                string[] list = stringRetriever.GetFileList();
+
+                FilterStrings filterStrings = new FilterStrings(filters);
+
+                string[] filteredList = filterStrings.Filter(list);
+
+                RenameFiles renameFiles = new RenameFiles(consoleWriter, renamers);
+
+                renameFiles.Convert(list);
+
+                consoleWriter.WriteColorMessage("Done!", MessageType.success);
             }
             catch (Exception e)
             {
-                consoleWriter.WriteColorMessage(e.Message, messageType.failure);
+                consoleWriter.WriteColorMessage(e.Message, MessageType.failure);
             }
         }
     }
 
-    public class DoWork
+    public class StringRetriever
     {
-        private readonly FileProvider fileProvider;
-        private readonly MessageWriter messageWriter;
-        private readonly List<FilterRule> filterRules;
-        private readonly List<RenameRule> renameRules;
+        private readonly IFileProvider fileProvider;
 
-        public DoWork(
-            FileProvider fileProvider,
-            MessageWriter messageWriter,
-            List<FilterRule> filterRules,
-            List<RenameRule> renameRules)
+        public StringRetriever(IFileProvider fileProvider)
         {
             this.fileProvider = fileProvider ?? throw new ArgumentNullException(nameof(fileProvider));
-            this.messageWriter = messageWriter ?? throw new ArgumentNullException(nameof(messageWriter));
-            this.filterRules = filterRules ?? throw new ArgumentNullException(nameof(filterRules));
-            this.renameRules = renameRules ?? throw new ArgumentNullException(nameof(renameRules));
         }
 
-        public void Convert()
+        public string[] GetFileList()
+            => fileProvider.GetAllFiles();
+    }
+
+    public class FilterStrings
+    {
+        private readonly List<Filter> filters;
+
+        public FilterStrings(List<Filter> filters)
         {
-            var files = fileProvider.GetAllFiles();
+            this.filters = filters ?? throw new ArgumentNullException(nameof(filters));
+        }
 
-            foreach (var filterRule in filterRules)
+        public string[] Filter(string[] inputList)
+        {
+            string[] localList = inputList; // Doesn't mutate array.
+
+            foreach (var filter in filters)
             {
-                Filter filter = new Filter(filterRule);
-
-                files = filter.FilterFilepaths(files);
+                localList = filter.FilterFilepaths(localList);
             }
 
+            return localList;
+        }
+    }
+
+    public class RenameFiles // TODO: split out message writing to better conform to the SRP
+    {
+        private readonly IMessageWriter messageWriter;
+        
+        private readonly List<Renamer> renamers;
+
+        public RenameFiles(
+            IMessageWriter messageWriter,            
+            List<Renamer> renamers)
+        {
+            
+            this.messageWriter = messageWriter ?? throw new ArgumentNullException(nameof(messageWriter));
+            
+            this.renamers = renamers ?? throw new ArgumentNullException(nameof(renamers));
+        }
+
+        public void Convert(string[] files)
+        {
             foreach (var filepath in files)
             {
                 string unchangedFilepath = filepath;
                 string mutatingFilepath = filepath;
 
-                foreach (var renameRule in renameRules)
+                foreach (var renamer in renamers)
                 {
-                    Renamer renamer = new Renamer(renameRule);
-
                     mutatingFilepath = renamer.Rename(mutatingFilepath);
                 }
 
-                messageWriter.WriteColorMessage(Path.GetFileName(unchangedFilepath), messageType.incorrect);
-                messageWriter.WriteColorMessage("converted to:", messageType.information);
-                messageWriter.WriteColorMessage(Path.GetFileName(mutatingFilepath), messageType.correct);
+                messageWriter.WriteColorMessage(Path.GetFileName(unchangedFilepath), MessageType.incorrect);
+                messageWriter.WriteColorMessage("converted to:", MessageType.information);
+                messageWriter.WriteColorMessage(Path.GetFileName(mutatingFilepath), MessageType.correct);
                 messageWriter.WriteMessage("");
             }
         }
     }
-
-    public interface FileProvider
-    {
-        string[] GetAllFiles();
-    }
-
-    public class FileRetriever : FileProvider
-    {
-        public string[] GetAllFiles()
-            => Directory.GetFiles(Directory.GetCurrentDirectory());
-    }
-
-    public interface RenameRule
-    {
-        string ApplyRule(string FilePath);
-    }
-
-    public interface FilterRule
-    {
-        string[] ApplyRule(string[] FilePath);
-    }
-
-    public class Renamer
-    {
-        private readonly RenameRule renameRule;
-
-        public Renamer(RenameRule renameRule)
-        {
-            if (renameRule == null)
-                throw new ArgumentNullException(nameof(renameRule));
-
-            this.renameRule = renameRule;
-        }
-
-        public string Rename(string FilePath)
-            => this.renameRule.ApplyRule(FilePath);
-    }
-
-    public class Filter
-    {
-        private readonly FilterRule filterRule;
-
-        public Filter(FilterRule filterRule)
-        {
-            if (filterRule == null)
-                throw new ArgumentNullException(nameof(filterRule));
-
-            this.filterRule = filterRule;
-        }
-
-        public string[] FilterFilepaths(string[] filePaths)
-             => this.filterRule.ApplyRule(filePaths);
-    }
-
-    public interface MessageWriter
-    {
-        void WriteMessage(string message);
-
-        void WriteColorMessage(string message, messageType color); // Not sure about this.
-    }
-
-    public enum messageType
-    {
-        correct,
-        incorrect,
-        success,
-        failure,
-        information,
-    }
-
-    public class ConsoleWriter : MessageWriter
-    {
-        public void WriteColorMessage(string message, messageType type)
-        {
-            switch (type)
-            {
-                case messageType.correct:
-                    Console.ForegroundColor = ConsoleColor.DarkGreen;
-                    break;
-                case messageType.incorrect:
-                    Console.ForegroundColor = ConsoleColor.DarkRed;
-                    break;
-                case messageType.success:
-                    Console.ForegroundColor = ConsoleColor.Green;
-                    break;
-                case messageType.failure:
-                    Console.ForegroundColor = ConsoleColor.Red;
-                    break;
-                case messageType.information:
-                    Console.ForegroundColor = ConsoleColor.DarkYellow;
-                    break;
-                default:
-                    break;
-            }
-
-            Console.WriteLine(message);
-            Console.ResetColor();
-        }
-
-        public void WriteMessage(string message)
-        {
-            Console.WriteLine(message);
-        }
-    }
 }
-
