@@ -84,29 +84,41 @@ namespace File_Renamer
 
             this.FilterStrings = new FilterStrings(filters);
 
-            this.RenameFiles = new RenameFiles(new ConsoleNotifier(new ConsoleWriter()), renamers);
+            this.RenameFiles = new RenameFiles(new FileRenamedEventHandler(new ConsoleWriter()), renamers);
         }
     }
 
-    public interface INotificationService
+    public class FileRenamed
     {
-        void Notify(string input, string result);
+        public readonly string OldName;
+        public readonly string NewName;
+
+        public FileRenamed(string oldName, string newName)
+        {
+            this.OldName = oldName ?? throw new ArgumentNullException(nameof(oldName));
+            this.NewName = newName ?? throw new ArgumentNullException(nameof(newName));
+        }
     }
 
-    public class ConsoleNotifier : INotificationService
+    public interface IEventHandler<TEvent>
+    {
+        void Handle(TEvent e);
+    }
+
+    public class FileRenamedEventHandler : IEventHandler<FileRenamed>
     {
         private readonly IMessageWriter messageWriter;
 
-        public ConsoleNotifier(IMessageWriter messageWriter)
+        public FileRenamedEventHandler(IMessageWriter messageWriter)
         {
             this.messageWriter = messageWriter ?? throw new ArgumentNullException(nameof(messageWriter));
         }
 
-        public void Notify(string input, string result)
+        public void Handle(FileRenamed e)
         {
-            messageWriter.WriteColorMessage(Path.GetFileName(input), MessageType.incorrect);
+            messageWriter.WriteColorMessage(Path.GetFileName(e.OldName), MessageType.incorrect);
             messageWriter.WriteColorMessage("converted to:", MessageType.information);
-            messageWriter.WriteColorMessage(Path.GetFileName(result), MessageType.correct);
+            messageWriter.WriteColorMessage(Path.GetFileName(e.NewName), MessageType.correct);
             messageWriter.WriteMessage("");
         }
     }
@@ -114,14 +126,14 @@ namespace File_Renamer
     public class RenameFiles
     {
         private readonly List<Renamer> renamers;
-        private readonly INotificationService notification;
+        private readonly IEventHandler<FileRenamed> fileRenamedEventHandler;
 
-        public RenameFiles(
-            INotificationService notification,
-            List<Renamer> renamers)
+        public RenameFiles(IEventHandler<FileRenamed> fileRenamedEventHandler, List<Renamer> renamers)
         {
-            this.notification = notification ?? throw new ArgumentNullException(nameof(notification));
-            this.renamers = renamers ?? throw new ArgumentNullException(nameof(renamers));
+            this.fileRenamedEventHandler = fileRenamedEventHandler
+                ?? throw new ArgumentNullException(nameof(fileRenamedEventHandler));
+            this.renamers = renamers
+                ?? throw new ArgumentNullException(nameof(renamers));
         }
 
         public void Convert(string[] files)
@@ -136,7 +148,7 @@ namespace File_Renamer
                     mutatingFilepath = renamer.Rename(mutatingFilepath);
                 }
 
-                this.notification.Notify(unchangedFilepath, mutatingFilepath);
+                this.fileRenamedEventHandler.Handle(new FileRenamed(unchangedFilepath, mutatingFilepath));
             }
         }
     }
