@@ -33,9 +33,9 @@ namespace File_Renamer
 
     public class CompositionRoot
     {
-        public StringRetriever StringRetriever { get; set; }
-        public FilterStrings FilterStrings { get; set; }
-        public RenameFiles RenameFiles { get; set; }
+        public StringRetriever StringRetriever { get; }
+        public FilterStrings FilterStrings { get; }
+        public RenameFiles RenameFiles { get; }
 
         public CompositionRoot()
         {
@@ -84,42 +84,7 @@ namespace File_Renamer
 
             this.FilterStrings = new FilterStrings(filters);
 
-            this.RenameFiles = new RenameFiles(new Notifier(new ConsoleWriter()), renamers);
-        }
-    }
-
-    public class StringRetriever
-    {
-        private readonly IFileProvider fileProvider;
-
-        public StringRetriever(IFileProvider fileProvider)
-        {
-            this.fileProvider = fileProvider ?? throw new ArgumentNullException(nameof(fileProvider));
-        }
-
-        public string[] GetFileList()
-            => fileProvider.GetAllFiles();
-    }
-
-    public class FilterStrings
-    {
-        private readonly List<Filter> filters;
-
-        public FilterStrings(List<Filter> filters)
-        {
-            this.filters = filters ?? throw new ArgumentNullException(nameof(filters));
-        }
-
-        public string[] Filter(string[] inputList)
-        {
-            string[] localList = inputList; // Doesn't mutate array.
-
-            foreach (var filter in filters)
-            {
-                localList = filter.FilterFilepaths(localList);
-            }
-
-            return localList;
+            this.RenameFiles = new RenameFiles(new ConsoleNotifier(new ConsoleWriter()), renamers);
         }
     }
 
@@ -128,11 +93,11 @@ namespace File_Renamer
         void Notify(string input, string result);
     }
 
-    public class Notifier : INotificationService
+    public class ConsoleNotifier : INotificationService
     {
         private readonly IMessageWriter messageWriter;
 
-        public Notifier(IMessageWriter messageWriter)
+        public ConsoleNotifier(IMessageWriter messageWriter)
         {
             this.messageWriter = messageWriter ?? throw new ArgumentNullException(nameof(messageWriter));
         }
