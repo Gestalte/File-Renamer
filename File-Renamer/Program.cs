@@ -8,71 +8,83 @@ namespace File_Renamer
 {
     partial class Program
     {
-        static void Main(string[] args) // Composition Root
+        static void Main()
         {
-            var consoleWriter = new ConsoleWriter();
+            ConsoleWriter localConsoleWriter = new ConsoleWriter();
 
             try
             {
-                IConfiguration Configuration = new ConfigurationBuilder()
-                .SetBasePath(Directory.GetCurrentDirectory())
-                .AddJsonFile("appsettings.json")
-                .Build();
+                var compositionRoot = new CompositionRoot();
 
-                IEnumerable<string> filterRuleNames = Configuration.GetSection("FilterRules")
-                    .GetChildren()
-                    .Select(x => x.Value);
+                string[] list = compositionRoot.StringRetriever.GetFileList();
 
-                IEnumerable<string> renameRulesNames = Configuration.GetSection("RenameRules")
-                    .GetChildren()
-                    .Select(x => x.Value);
+                string[] filteredList = compositionRoot.FilterStrings.Filter(list);
 
-                List<IFilterRule> filterRules = new List<IFilterRule>();
+                compositionRoot.RenameFiles.Convert(list);
 
-                foreach (string filterRule in filterRuleNames)
-                {
-                    Type type = Type.GetType(filterRule, throwOnError: true);
-                    IFilterRule fr = (IFilterRule)Activator.CreateInstance(type);
-                    filterRules.Add(fr);
-                }
-
-                List<IRenameRule> renameRules = new List<IRenameRule>();
-
-                foreach (string renameRule in renameRulesNames)
-                {
-                    Type type = Type.GetType(renameRule, throwOnError: true);
-                    IRenameRule rr = (IRenameRule)Activator.CreateInstance(type);
-                    renameRules.Add(rr);
-                }
-
-                List<Filter> filters = new List<Filter>();
-
-                foreach (IFilterRule filterRule in filterRules)
-                    filters.Add(new Filter(filterRule));
-
-                List<Renamer> renamers = new List<Renamer>();
-
-                foreach (IRenameRule renameRule in renameRules)
-                    renamers.Add(new Renamer(renameRule));
-
-                StringRetriever stringRetriever = new StringRetriever(new FileRetriever());
-
-                string[] list = stringRetriever.GetFileList();
-
-                FilterStrings filterStrings = new FilterStrings(filters);
-
-                string[] filteredList = filterStrings.Filter(list);
-
-                RenameFiles renameFiles = new RenameFiles(consoleWriter, renamers);
-
-                renameFiles.Convert(list);
-
-                consoleWriter.WriteColorMessage("Done!", MessageType.success);
+                localConsoleWriter.WriteColorMessage("Done!", MessageType.success);
             }
             catch (Exception e)
             {
-                consoleWriter.WriteColorMessage(e.Message, MessageType.failure);
+                localConsoleWriter.WriteColorMessage(e.Message, MessageType.failure);
             }
+        }
+    }
+
+    public class CompositionRoot
+    {
+        public StringRetriever StringRetriever { get; set; }
+        public FilterStrings FilterStrings { get; set; }
+        public RenameFiles RenameFiles { get; set; }
+
+        public CompositionRoot()
+        {
+            IConfiguration Configuration = new ConfigurationBuilder()
+            .SetBasePath(Directory.GetCurrentDirectory())
+            .AddJsonFile("appsettings.json")
+            .Build();
+
+            IEnumerable<string> filterRuleNames = Configuration.GetSection("FilterRules")
+                .GetChildren()
+                .Select(x => x.Value);
+
+            IEnumerable<string> renameRulesNames = Configuration.GetSection("RenameRules")
+                .GetChildren()
+                .Select(x => x.Value);
+
+            List<IFilterRule> filterRules = new List<IFilterRule>();
+
+            foreach (string filterRule in filterRuleNames)
+            {
+                Type type = Type.GetType(filterRule, throwOnError: true);
+                IFilterRule fr = (IFilterRule)Activator.CreateInstance(type);
+                filterRules.Add(fr);
+            }
+
+            List<IRenameRule> renameRules = new List<IRenameRule>();
+
+            foreach (string renameRule in renameRulesNames)
+            {
+                Type type = Type.GetType(renameRule, throwOnError: true);
+                IRenameRule rr = (IRenameRule)Activator.CreateInstance(type);
+                renameRules.Add(rr);
+            }
+
+            List<Filter> filters = new List<Filter>();
+
+            foreach (IFilterRule filterRule in filterRules)
+                filters.Add(new Filter(filterRule));
+
+            List<Renamer> renamers = new List<Renamer>();
+
+            foreach (IRenameRule renameRule in renameRules)
+                renamers.Add(new Renamer(renameRule));
+
+            this.StringRetriever = new StringRetriever(new FileRetriever());
+
+            this.FilterStrings = new FilterStrings(filters);
+
+            this.RenameFiles = new RenameFiles(new Notifier(new ConsoleWriter()), renamers);
         }
     }
 
@@ -111,19 +123,39 @@ namespace File_Renamer
         }
     }
 
-    public class RenameFiles // TODO: split out message writing to better conform to the SRP
+    public interface INotificationService
+    {
+        void Notify(string input, string result);
+    }
+
+    public class Notifier : INotificationService
     {
         private readonly IMessageWriter messageWriter;
-        
+
+        public Notifier(IMessageWriter messageWriter)
+        {
+            this.messageWriter = messageWriter ?? throw new ArgumentNullException(nameof(messageWriter));
+        }
+
+        public void Notify(string input, string result)
+        {
+            messageWriter.WriteColorMessage(Path.GetFileName(input), MessageType.incorrect);
+            messageWriter.WriteColorMessage("converted to:", MessageType.information);
+            messageWriter.WriteColorMessage(Path.GetFileName(result), MessageType.correct);
+            messageWriter.WriteMessage("");
+        }
+    }
+
+    public class RenameFiles
+    {
         private readonly List<Renamer> renamers;
+        private readonly INotificationService notification;
 
         public RenameFiles(
-            IMessageWriter messageWriter,            
+            INotificationService notification,
             List<Renamer> renamers)
         {
-            
-            this.messageWriter = messageWriter ?? throw new ArgumentNullException(nameof(messageWriter));
-            
+            this.notification = notification ?? throw new ArgumentNullException(nameof(notification));
             this.renamers = renamers ?? throw new ArgumentNullException(nameof(renamers));
         }
 
@@ -139,10 +171,7 @@ namespace File_Renamer
                     mutatingFilepath = renamer.Rename(mutatingFilepath);
                 }
 
-                messageWriter.WriteColorMessage(Path.GetFileName(unchangedFilepath), MessageType.incorrect);
-                messageWriter.WriteColorMessage("converted to:", MessageType.information);
-                messageWriter.WriteColorMessage(Path.GetFileName(mutatingFilepath), MessageType.correct);
-                messageWriter.WriteMessage("");
+                this.notification.Notify(unchangedFilepath, mutatingFilepath);
             }
         }
     }
